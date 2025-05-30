@@ -173,9 +173,9 @@ class CameraCalibrationDataCollection:
             # Aruco properties
             self.aruco_dict = aruco.getPredefinedDictionary(self.target_aruco_dict)
             self.aruco_params = aruco.DetectorParameters()
-            self.aruco_params.cornerRefinementMethod = aruco.CORNER_REFINE_SUBPIX
-            self.aruco_params.cornerRefinementMinAccuracy = 0.0001
-            self.aruco_params.cornerRefinementMaxIterations = 10000
+            self.aruco_params.cornerRefinementMethod = aruco.CORNER_REFINE_CONTOUR
+            self.aruco_params.cornerRefinementMinAccuracy = 0.00001
+            self.aruco_params.cornerRefinementMaxIterations = 1000
             self.detector = cv2.aruco.ArucoDetector(self.aruco_dict)
 
 
@@ -183,9 +183,9 @@ class CameraCalibrationDataCollection:
             # Charuco properties
             self.charuco_params = cv2.aruco.CharucoParameters()
             self.aruco_params = cv2.aruco.DetectorParameters()
-            self.aruco_params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
-            self.aruco_params.cornerRefinementMinAccuracy = 0.0001
-            self.aruco_params.cornerRefinementMaxIterations = 10000
+            self.aruco_params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_CONTOUR
+            self.aruco_params.cornerRefinementMinAccuracy = 0.00001
+            self.aruco_params.cornerRefinementMaxIterations = 1000
             self.refine_params = cv2.aruco.RefineParameters()
 
             self.charuco_dict = aruco.getPredefinedDictionary(self.target_aruco_dict)
@@ -281,12 +281,12 @@ class CameraCalibrationDataCollection:
 
                 rx = theta * math.cos(phi)
                 ry = theta * math.sin(phi)
-                rz = 0.5 * (random.random()-0.5)
+                rz = 0.5 * (random.random()-0.5)/2.0
 
                 transformation_matrix = np.eye(4)
                 transformation_matrix[:3, :3] = R.from_rotvec(
                     [rx, ry, rz]).as_matrix().transpose()
-                transformation_matrix[:3, 3] = np.matmul(transformation_matrix[:3, :3], np.array([0.02 * (random.random() - 0.5), 0.02 * (
+                transformation_matrix[:3, 3] = np.matmul(transformation_matrix[:3, :3], np.array([0.015 * (random.random() - 0.5), 0.015 * (
                     random.random() - 0.5), -self.radius[0] - random.random() * (self.radius[1] - self.radius[0])])).reshape(3)  # for big KU ARUCO
                 # transformation_matrix[:3, 3] = np.matmul(transformation_matrix[:3,:3], np.array([0.02 * (random.random() - 0.5), 0.02 * (random.random() - 0.5), -self.radius[0] - random.random() * (self.radius[1] - self.radius[0])])).reshape(3) #for big small ARUCO
                 self.calibration_poses.append(transformation_matrix)
@@ -334,7 +334,7 @@ class CameraCalibrationDataCollection:
                 continue
 
             if len(charucoIds) < 6 or len(markerIds) < 6:
-                draw_and_publish_markers(rgb_ros_image, markerCorners, markerIds)
+                self.draw_and_publish_markers(rgb_ros_image, markerCorners, markerIds)
                 rgb_ros_image, gray_cv_image = self.getRosImage()
                 input('\033[33mFound {} aruco(s), update ur pose manually and try again.\033[0m'.format(
                     len(markerIds)))

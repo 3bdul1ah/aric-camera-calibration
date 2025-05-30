@@ -8,6 +8,7 @@
     <joint name="TCP_to_cam" type="fixed">
         <parent link="TCP"/>
         <child link="davis"/>
+        <!-- REPLACE x y z, r p y with YOUR INITIAL ESTIMATE HERE -->
 	    <origin xyz="x y z" rpy="r p y"/>
     </joint>
 

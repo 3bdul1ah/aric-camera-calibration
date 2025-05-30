@@ -4,12 +4,12 @@
 
 ## Requirements
 
-- OpenCV >=4.8
+- OpenCV ==4.8
 - OpenCV contrib >= 4.8
 
 ## How to use
 
-1. Generate `calibration_config.json` as per your setup. Follow `sample_calibration_config.json` for guidance. (Currently, **ChAruCo board** is the only supported calibration target)
+1. Generate `calibration_config.json` as per your setup. Follow `sample_calibration_config.json` for guidance, replace x, y, z, and the rotation matrix as per your setup, otherwise you'll get an error. (Currently, **ChAruCo board** is the only supported calibration target)
 2. Generate a `tool.urdf.xacro` as per your tool. Follow `sample_tool.urdf.xacro` for gu
 3. Use `bringup_calibration.launch`
 4. Calibration data will be saved in a new directory:

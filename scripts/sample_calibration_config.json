@@ -9,7 +9,7 @@
         "checker_length": 0.029,
         "marker_length": 0.0215,
         "legacy_pattern": false,
-        "aruco_dict": "DICT_4X4_100",
+        "aruco_dict": "DICT_6X6_100",
         "blur":[7,1],
         "target2base": [[-1, 0,  0, x],
                         [ 0, 1,  0, y],

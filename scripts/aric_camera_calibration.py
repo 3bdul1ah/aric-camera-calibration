@@ -397,7 +397,8 @@ class CameraCalibrator:
             if solverIterations != 0:
 
                 solverRMSE = np.average(np.linalg.norm((X_B - X_B_old)[0:3, :], axis=0))
-                # print('Converging RMSE: {:.2e}'.format(solverRMSE))
+                if solverIterations%20 ==  0:
+                    print('Converging RMSE: {:.2e}'.format(solverRMSE))
 
             X_B_old = np.copy(X_B)
 
@@ -421,10 +422,11 @@ class CameraCalibrator:
 
             count = len(xyzlist)
 
-            # if solverRMSE < solverMinRMSE:
+            if solverRMSE < solverMinRMSE:
 
-                # print("calibrarion Done")
+                print("Calibrarion done!")
                 # print(H_CT)
+                
         return H_CT, H_AB
 
     def objective_function(self):
