@@ -1,17 +1,113 @@
-# ARIC Camera Calibration Routine
+# ARIC Camera Calibration Routine | Prophesee EVK4 - HD
+
+<!-- &nbsp; -->
+<img src=".readme/1010.jpg" />
+<!-- &nbsp; -->
 
 **NOTE**: This package uses an old, unoptimized version of `ros_robot_pkg`, but it's working!
 
 ## Requirements
 
-- OpenCV ==4.8
-- OpenCV contrib >= 4.8
+This pipeline was tested using:
 
-## How to use
+- Ubuntu 20.04 64-bit
+- ROS Noetic
+- Python 3.8.10
+- Prophesee EVK4 - HD
+- DV ROS
+- Metavision SDK (OpenEB) 3.0.2
+- Metavision ROS Driver (unofficial)
+- OpenCV contrib = 4.8.0.76
 
-1. Generate `calibration_config.json` as per your setup. Follow `sample_calibration_config.json` for guidance, replace x, y, z, and the rotation matrix as per your setup, otherwise you'll get an error. (Currently, **ChAruCo board** is the only supported calibration target)
-2. Generate a `tool.urdf.xacro` as per your tool. Follow `sample_tool.urdf.xacro` for gu
-3. Use `bringup_calibration.launch`
+## Installation
+This routine requires Python >= 3.8.10 and we strongly recommend the use of virtual environments (pyenv or venv).
+
+Also make sure you have ROS sourced properly such that ROS_VERSION is set:
+
+```bash
+source /opt/ros/noetic/setup.bash
+```
+
+Clone this repository in your catkin workspace:
+
+```bash
+cd catkin_ws/src
+git clone https://github.com/AdvancedResearchInnovationCenter/aric-camera-calibration.git
+cd aric-camera-calibration
+git checkout prophesee-camera-calibration
+pip install -r requirements.txt
+```
+And install [DV_ROS](https://gitlab.com/inivation/dv/dv-ros) in a separate workspace.
+
+We calibrate both intrinsic and extrinsic parameters of the Prophesee EVK4 - HD by accumulating events over time and convert them to grayscale images using `dv_ros_accumulator`. 
+
+To install the Metavision ROS Driver (unofficial but faster), install `python3-wstool` and follow the instructions below:
+
+```
+mkdir -p ~/metavision_ros_driver_ws/src
+cd ~/metavision_ros_driver_ws
+git clone git@github.com:berndpfrommer/metavision_ros_driver src/metavision_ros_driver
+git checkout e612eb906b9371954e428b82117bba39b26ca749
+wstool init src src/metavision_ros_driver/metavision_ros_driver.rosinstall
+```
+
+Before compiling the ROS driver we need to swap 'event_array_msgs' with our customized version included in `aric-camera-calibration` folder:
+
+```
+cd ..
+rm -rf event_array_msgs
+cp -r ~/catkin_ws/src/aric-camera-calibration/event_array_msgs ~/metavision_ros_driver_ws/src
+```
+
+Now configure and build:
+
+```
+cd ..
+catkin config -DCMAKE_BUILD_TYPE=RelWithDebInfo  # (optionally add -DCMAKE_EXPORT_COMPILE_COMMANDS=1)
+catkin build
+```
+
+Also compile catkin workspace:
+
+```
+cd ~/catkin_ws
+catkin_make
+```
+
+Now make sure `aric-camera-calibration`,`dv-ros` and `metavision_ros_driver` are properly sourced (tip: include it in your .bashrc):
+
+```
+source ~/catkin_ws/devel/setup.bash
+source ~/dv_ros/devel/setup.bash
+source ~/dv_ros/devel/setup.bash
+```
+
+Connect the Prophesee camera. Check that you receive the events correctly:
+
+```
+metavision_viewer
+```
+
+Now quit `metavision_viewer` and run `run_pipeline.sh`. Alternatively, run each terminal independently (make sure each time that the workspaces are sourced properly).
+
+```
+cd src/aric-camera-calibration
+chmod +x run run_pipeline.sh
+./run_pipeline.sh
+```
+
+ `rqt_image_view` allows you to select the rostopic with grayscale stream `/accumulator/image`, and `rqt_reconfigure` lets you play with the accumulation and camera parameters. More info can be found [here](https://docs.prophesee.ai/stable/hw/manuals/biases.html).
+
+If you arrived here successfully, congrats! We can now procede with the actual calibration:
+
+
+1. Generate `calibration_config.json` as per your setup. Follow `event_camera_calibration_config.json` for guidance, replace x, y, z, and the rotation matrix as per your setup, otherwise you'll get an error. (Currently, **ChAruCo board** is the only supported calibration target)
+2. Generate a `tool.urdf.xacro` as per your tool. Follow `sample_tool.urdf.xacro` for guidance
+3. Run:
+  ```
+  roslaunch aric-camera-calibration bringup_calibration.launch
+  ```
+  tip: if you find the focus to be very narrow in height, reduce the amount of incoming light by reducing the aperture of the camera!
 4. Calibration data will be saved in a new directory:
    ```
    ros_robot
