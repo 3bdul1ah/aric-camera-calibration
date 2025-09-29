@@ -95,6 +95,7 @@ class CameraCalibrationDataCollection:
             ).resolve())
         
         self.ros_image_topic = self.calibration_config['calibration_data']['image_topic']
+        self.rotate_image_180 = self.calibration_config['calibration_data']['rotate_image_180']
         self.data_collection_setup = self.calibration_config['calibration_data']['data_collection_setup']
         self.dump_file_name = self.calibration_config['calibration_data']['output_file_name']# + "_" + datetime.now().strftime("%Y-%m-%d-%H-%M") + '.json'
         self.calibration_config['calibration_data'].update({'output_file_name': self.dump_file_name})
@@ -108,7 +109,7 @@ class CameraCalibrationDataCollection:
         if not os.path.exists(self.images_dir_abs):
             os.makedirs(self.images_dir_abs)
         
-        verbose = False 
+        verbose = True 
         #TODO: make this generalizable for different targets
         if verbose:
             print('--------------------------------------------------------')
@@ -121,6 +122,7 @@ class CameraCalibrationDataCollection:
             print(f'     ├── relative_dir: {self.calibration_data_dir_relative}')
             print(f'     └── absolute_dir: {self.calibration_data_dir_abs}')
             print(f'      ros_image_topic: {self.ros_image_topic}')
+            print(f'     rotate_image_180: {self.rotate_image_180}')
             print(f'data_collection_setup: {self.data_collection_setup}')
             print(f'       dump_file_name: {self.dump_file_name}')
             print()
@@ -295,6 +297,8 @@ class CameraCalibrationDataCollection:
 
         ros_image = rospy.wait_for_message(self.ros_image_topic, Image)
         cv_image = self.cv_bridge.imgmsg_to_cv2(ros_image)
+        if self.rotate_image_180:
+            cv_image = cv2.rotate(cv_image, cv2.ROTATE_180)
         info = self.get_image_info(cv_image)
         # print(info)
         
@@ -311,11 +315,24 @@ class CameraCalibrationDataCollection:
         return blur_rgb_ros_image, blur_gray_cv_image
 
     def draw_and_publish_markers(self, rgb_ros_image, markerCorners, markerIds):
-        markers_cv_image = aruco.drawDetectedMarkers(
-            image=self.cv_bridge.imgmsg_to_cv2(rgb_ros_image),
-            corners=markerCorners,
-            ids=markerIds,
-            borderColor=(0, 255, 0))
+        # markers_cv_image = aruco.drawDetectedMarkers(
+        #     image=self.cv_bridge.imgmsg_to_cv2(rgb_ros_image),
+        #     corners=markerCorners,
+        #     ids=markerIds,
+        #     borderColor=(0, 255, 0))
+        markers_cv_image = self.cv_bridge.imgmsg_to_cv2(rgb_ros_image)
+        ids = markerIds.flatten().astype(int)
+        for i, marker_corners in enumerate(markerCorners):
+            pts = marker_corners[0].astype(int)
+            cv2.putText(img=markers_cv_image, text="ID: " + str(ids[i]),
+                        org=tuple(pts[0] - np.array([0, 10])),
+                        fontFace=cv2.FONT_HERSHEY_SIMPLEX, fontScale=2, color=(0,0,255), thickness=2)
+            for i in range(4):
+                pt1 = tuple(pts[i])
+                pt2 = tuple(pts[(i+1) % 4])
+                cv2.line(img=markers_cv_image, pt1=pt1, pt2=pt2, color=(0, 255, 0), thickness=2)
+            cv2.circle(img=markers_cv_image, center=tuple(pts[0]), radius=8, color=(255, 0, 0), thickness=2)
+            
         self.image_markers_publisher.publish(self.cv_bridge.cv2_to_imgmsg(markers_cv_image, encoding="rgb8"))
 
     def getChArucoMarkers(self, rgb_ros_image: Image, gray_cv_image: np.ndarray):
@@ -331,6 +348,7 @@ class CameraCalibrationDataCollection:
             if charucoIds is None or markerIds is None:
                 rgb_ros_image, gray_cv_image = self.getRosImage()
                 charucoCorners = charucoIds = markerCorners = markerIds = []
+                # print("HERE")
                 continue
 
             if len(charucoIds) < 6 or len(markerIds) < 6:

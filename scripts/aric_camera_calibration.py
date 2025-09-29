@@ -208,7 +208,8 @@ class CameraCalibrator:
         print(f'* {GRN}Distortion Coefficients{RST}')
         print("  " + str([c[0].tolist() for c in self.distortion_coefficients]))
         print()
-        
+        # TODO: Rename the calibration_results_txt file to calibration_results_reproj_error.txt
+        self.calibration_results_txt = str(pathlib.Path(os.path.join(self.datadir, '..', f'calibration_results_{self.reprojection_error}.txt' )).resolve())
         with open(self.calibration_results_txt, 'w') as txt_file:
             txt_file.write("\n")
             txt_file.write("+------------------------------+\n")
@@ -397,7 +398,7 @@ class CameraCalibrator:
             if solverIterations != 0:
 
                 solverRMSE = np.average(np.linalg.norm((X_B - X_B_old)[0:3, :], axis=0))
-                if solverIterations%20 ==  0:
+                if solverIterations%200 ==  0:
                     print('Converging RMSE: {:.2e}'.format(solverRMSE))
 
             X_B_old = np.copy(X_B)
@@ -422,9 +423,9 @@ class CameraCalibrator:
 
             count = len(xyzlist)
 
-            if solverRMSE < solverMinRMSE:
+        if solverRMSE < solverMinRMSE:
 
-                print("Calibrarion done!")
+            print("Calibrarion done!")
                 # print(H_CT)
                 
         return H_CT, H_AB
