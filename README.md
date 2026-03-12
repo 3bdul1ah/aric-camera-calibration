@@ -1,122 +1,251 @@
-# ARIC Camera Calibration Routine
+# Hand-Eye Camera Calibration (ROS 2)
 
-**NOTE**: This package uses an old, unoptimized version of `ros_robot_pkg`, but it's working!
+This is the ROS 2 version of the ARIC Camera Calibration package. It does hand-eye calibration for eye-on-hand setups using the AX = XB formulation and finds `tcp_T_cam`, the 4x4 rigid transform from the robot's TCP to the camera optical frame.
 
-## Requirements
+<p align="center"><img src="./doc/tf_chain.png" width="500"></p>
 
-- OpenCV ==4.8
-- OpenCV contrib >= 4.8
+![Platform](https://img.shields.io/badge/platform-Intel%20NUC-blue)
+![ROS 2](https://img.shields.io/badge/ROS%202-Humble-green)
+![Python](https://img.shields.io/badge/Python-3.10-yellow)
+![OpenCV](https://img.shields.io/badge/OpenCV-4.5.4-orange)
+![NumPy](https://img.shields.io/badge/NumPy-1.21.5-lightblue)
+![SciPy](https://img.shields.io/badge/SciPy-1.8.0-red)
 
-## How to use
+## Installation
 
-1. Generate `calibration_config.json` as per your setup. Follow `sample_calibration_config.json` for guidance, replace x, y, z, and the rotation matrix as per your setup, otherwise you'll get an error. (Currently, **ChAruCo board** is the only supported calibration target)
-2. Generate a `tool.urdf.xacro` as per your tool. Follow `sample_tool.urdf.xacro` for gu
-3. Use `bringup_calibration.launch`
-4. Calibration data will be saved in a new directory:
-   ```
-   ros_robot
-     ├── CMakeLists.txt
-     ├── README.md
-     ├── calibration_data  <-- NEW DIRECTORY CREATED FOR YOUR CALIBRATION DATA
-     ├── launch
-     ├── package.xml
-     ├── scripts
-     ├── srv
-     └── xacros
-   ```
+You will also need a printed ChArUco board. I generated mine from [calib.io](https://calib.io/pages/camera-calibration-pattern-generator).
 
-## example `calibration_config.json `
+```bash
+cd ~/ros2_ws/src
+git clone https://github.com/3bdul1ah/ros2_handeye_camera-calibration.git
+pip3 install -r ros2_handeye_camera-calibration/requirements.txt
+cd ~/ros2_ws
+colcon build --packages-select aric_camera_calibration --symlink-install
+source install/setup.bash
+```
+
+## Prerequisites
+
+Start your robot and camera drivers before running anything. The calibration only needs the **color** stream. In my case I used a Doosan M1013 with a RealSense D415:
+
+```bash
+ros2 launch dsr_bringup2 dsr_bringup2_moveit.launch.py \
+  gripper:=2fg14 onrobot_ip:=192.168.1.1 host:=192.168.50.100 mode:=real
+
+ros2 launch realsense2_camera rs_launch.py \
+  serial_no:="'210622066079'" \
+  enable_color:=true enable_depth:=true \
+  rgb_camera.color_profile:=1280,720,15 \
+  depth_module.depth_profile:=424,240,15 \
+  align_depth.enable:=true \
+  enable_sync:=true \
+  spatial_filter.enable:=true \
+  temporal_filter.enable:=true \
+  publish_tf:=true
+```
+
+> **Note:** Depth, aligned depth, and the depth-related launch parameters (`depth_module`, `align_depth`, filters) are **not required for calibration**. The calibration uses only the color image and CharuCo board geometry. The depth streams are used by `pixel_picker` for optional depth-based 3D measurements and personal testing.
+
+Verify the color stream after launching:
+
+```bash
+ros2 topic echo /camera/camera/color/image_raw --once --no-arr | grep -E "width|height|encoding"
+# height: 720, width: 1280, encoding: rgb8
+```
+
+If you also want to use `pixel_picker` with depth, verify aligned depth is available:
+
+```bash
+ros2 topic echo /camera/camera/aligned_depth_to_color/image_raw --once --no-arr | grep -E "width|height|encoding"
+# height: 720, width: 1280, encoding: 16UC1
+```
+
+### Using a different robot
+
+Only [`doosan_ros2.py`](aric_camera_calibration/doosan_ros2.py) is specific to my robot. If you want to use this with a different robot, create a new file with a class that has these four methods:
+
+```python
+class YourRobot:
+    def __init__(self):                    # connect and initialise
+    def move_to_calib_start(self) -> bool: # move to the starting joint pose
+    def get_current_posx(self) -> list:    # return [x, y, z, rx, ry, rz] in mm/deg
+    def move_posx(self, pose) -> bool:     # move to [x, y, z, rx, ry, rz]
+    def get_ee_matrix(self) -> np.ndarray: # return 4x4 base_T_tcp in metres
+```
+
+Have a look at [`doosan_ros2.py`](aric_camera_calibration/doosan_ros2.py) to see how I did it. Then register your class in [`data_collection_routine.py`](aric_camera_calibration/data_collection_routine.py) (there are commented out examples for UR and ABB) and set `"name"` in the config to match.
+
+### URDF setup
+
+Make sure `camera_link` is defined in your URDF, placed approximately at the camera's mounting point relative to `tool0` (your robot's TCP frame). Follow the [ROS coordinate conventions](https://www.ros.org/reps/rep-0103.html). The RealSense driver will then publish `camera_color_optical_frame` from `camera_link` automatically.
+
+<p align="center"><img src="./doc/camera_tf.png" width="400"></p>
+
+For the RealSense, `camera_link` goes at the left infrared sensor as described in the [realsense-ros](https://github.com/IntelRealSense/realsense-ros) package:
+
+<p align="center"><img src="./doc/camera_link.png" width="400"></p>
+
+You can check the camera_link for your specific RealSense model by referring to [this pull request](https://github.com/IntelRealSense/realsense-ros/pull/1124). In my case:
+
+```bash
+ros2 launch realsense2_description view_model.launch.py model:=test_d415_camera.urdf.xacro
+```
+
+<p align="center"><img src="./doc/check_camera_link.png" width="400"></p>
+
+### Finding the calibration start pose
+
+The data collection routine needs a starting joint configuration where the ChArUco board is centred in the camera's field of view.
+
+1. Jog the robot manually until the board is visible and well centred.
+2. Make sure you edit [`calibration_config.json`](config/calibration_config.json) to match your ChArUco board, then run `charuco_check` to confirm the board is fully detected:
+
+```bash
+ros2 run aric_camera_calibration charuco_check
+```
+
+<p align="center"><img src="./doc/charuco.png" width="400"></p>
+
+3. Record the joint angles from your robot's API.
+4. Add them as `CALIB_START_JOINTS` in [`doosan_ros2.py`](aric_camera_calibration/doosan_ros2.py).
+
+The calibration node generates poses around this starting point using [`build_calib_poses`](aric_camera_calibration/doosan_ros2.py), which moves the camera through a cone of viewpoints with varying position and tilt so the solver gets enough geometric diversity.
+
+## Running the Calibration
+
+Now everything is ready. Make sure [`calibration_config.json`](config/calibration_config.json) matches your setup:
 
 ```json
 {
-    "robot": {
-        "name": "UR10",
-        "ip": "192.168.50.110"
-    },
-    "calibration_target": {
-        "type": "charuco",
-        "size": [11,8],
-        "checker_length": 0.022,
-        "marker_length": 0.016,
-        "legacy_pattern": true,
-        "aruco_dict": "DICT_4X4_250",
-        "blur":[11,2],
-        "target2base": [[-1, 0,  0, 0.055],
-                        [ 0, 1,  0, -0.53],
-                        [ 0, 0, -1,     0],
-                        [ 0, 0,  0,     1]]
-    },
-    "calibration_data": {
-        "project_name": "tactile_ov7521_3",
-        "image_topic": "/ardu_cam/image_raw",
-        "data_collection_setup": [0.4, 5, 2, 0.10, 0.15],
-        "output_file_name": "tactile_ov7521"
-    }
+  "robot": { "name": "Doosan", "ip": "" },
+  "camera": {
+    "image_topic": "/camera/camera/color/image_raw/compressed",
+    "camera_info_topic": "/camera/camera/color/camera_info"
+  },
+  "calibration_target": {
+    "type": "charuco",
+    "size": [11, 8],
+    "checker_length": 0.029,
+    "marker_length": 0.021,
+    "aruco_dict": "DICT_6X6_250",
+    "legacy_pattern": true,
+    "blur": [7, 1]
+  },
+  "calibration_data": {
+    "project_name": "m1013_calibration",
+    "rotate_image_180": false,
+    "data_collection_setup": [0.4, 25, 20, 0.15, 0.20],
+    "output_file_name": "ee_pose",
+    "use_existing_data": false
+  }
 }
 ```
 
-### 1. `robot`
+- `size` is the number of squares `[columns, rows]`, not inner corners. Measure your printed board and set `checker_length` and `marker_length` in metres.
+- `data_collection_setup` is `[max_angle_rad, n_cycles, n_per_cycle, radius_min_m, radius_max_m]`. The node also offers preset options at runtime.
+- During calibration you will be asked whether to compute intrinsics from the collected images or load them from the camera's `/camera_info` topic.
 
-Info about the robot used
+Then run:
 
-|      Key | Description                |             Value             |  Type  |
-| -------: | -------------------------- | :----------------------------: | :----: |
-| `name` | Specifies the robot in use | "UR10", "ABB", or "Mitsubishi" | string |
-|   `ip` | Robot's IP address         |   _e.g._ "192.168.50.110"   | string |
+```bash
+ros2 run aric_camera_calibration collect_and_calibrate
+```
 
-### 2. `calibration_target`
+During calibration the robot will move through the generated poses while the camera captures images. You should see something like this:
 
-Info about the calibration target
+<p align="center"><img src="./doc/during_calib.png" width="400"></p>
 
-|                Key | Description                                                                                                                 |                                                                                                              Value                                                                                                              |         Type         |                                                                               Note                                                                               |
-| -----------------: | --------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :-------------------: | :---------------------------------------------------------------------------------------------------------------------------------------------------------------: |
-|           `type` | Calibration target type                                                                                                     |                                                                                                 "charuco", "aruco", or "checker"                                                                                                 |        string        |                                                                Currently, only "charuco" will work                                                                |
-|           `size` | Calibration target size                                                                                                     |                                                                                                 [rows x cols] (_e.g._ [11,8])                                                                                                 |      [int, int]      |                                                               num of squares,_NOT_ inner corners                                                               |
-| `checker_length` | Charuco/chess board black square length (m)                                                                                 |                                                                                                          _e.g._ 0.022                                                                                                          |         float         |                                                  It's better to measure it after printing the calibration target                                                  |
-|  `marker_length` | Charuco/aruco marker length (m)                                                                                             |                                                                                                          _e.g._ 0.016                                                                                                          |         float         |                                                  It's better to measure it after printing the calibration target                                                  |
-| `legacy_pattern` | This is related to Charuco targets.`<br>`It specifies whether you are using the old or the new  pattern for Charuco board |                                                                                                            True/False                                                                                                            |         bool         |                                Check this[issue](https://github.com/opencv/opencv/issues/23873#issuecomment-1620504453) for more info                                |
-|     `aruco_dict` | Which aruco dictionary is in use                                                                                            |                                                                                                    _e.g._ `DICT_4X4_250`                                                                                                    |        string        | Use the same naming pattern as in `cv2.aruco` library [here](https://docs.opencv.org/4.8.0/de/d67/group__objdetect__aruco.html#ga4e13135a118f497c6172311d601ce00d) |
-|           `blur` | Gaussian blur parameters used to smoothen the captured images                                                               |                                                                                       [kernel_size, standard_deviation] (_e.g._  [11,2])                                                                                       |     [int, float]     |                      [cv2.GaussianBlur()](https://docs.opencv.org/4.8.0/d4/d86/group__imgproc__filter.html#gaabe8c836e97159a9193fb0b11ac52cf1)                      |
-|    `target2base` | The transformation matrix from the calibration target to the robot base                                                     | $`{}^{base}T_{target} = \begin{bmatrix}  R_{3×3} & T_{3×1} \\[0.5em] 0_{1×3} & 1 \end{bmatrix}`$ `<br>` _e.g._ `<br>` [[-1, 0,  0, 0.055],`<br>`[ 0, 1,  0, -0.53],`<br>` [ 0, 0, -1, 0],`<br>` [ 0, 0,  0, 1]] | float (list of lists) |                            For convenience, we set the calibration target`<br>` orientation to be the same as the camera orientation                            |
+If you want to re-run the calibration on previously collected data, set `"use_existing_data": true` in the config and run the same command again.
 
-### 3. `calibration_data`
+### Example output
 
-Info about the output calibration data
+This is what I got with 101 poses on my Doosan M1013 (run 18):
 
-| Key                       | Description                       | Value                                                                                                      | Type                            | Note                                                                                              |
-| ------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `project_name`          | Your project name                 | _e.g._ "D435_calibration"                                                                                | string                          | A new directory named after the project will be`<br>` created to store all the calibration data |
-| `image_topic`           | Inbound image stream              | _e.g._ "/image/raw"                                                                                      | string                          | The input `image_topic` will be subscribed to                                                   |
-| `data_collection_setup` | Random pose generation parameters | [$`\phi`$, n_cycle, n_pose_per_cycle, min_radius, max_radius] `<br>` _e.g._ [0.4, 5, 20, 0.10, 0.15] | [float, int, int, float, float] |                                                                                                   |
-| `output_file_name`      | Pose-image pairs data JSON file   | _e.g._ "D435_calibration_2nd.json"                                                                       | string                          |                                                                                                   |
+```
+Intrinsic calibration source:
+  [0]  Load from RealSense /camera_info topic (default)
+  [1]  Compute from collected images (CharuCo calibration)
+Choice [0/1]: 1
 
-## Sample Output
-
-```txt
+READING CHARUCO BOARD:
+  101/101 images usable.
 +------------------------------+
 | INTRINSIC CAMERA CALIBRATION |
 +------------------------------+
-* Reprojection Error: 0.3585812344507631
+* Reprojection Error: 0.2226
 * Camera Matrix
-  [438.59222618   0.         323.89686632]
-  [  0.         439.81991094 240.11146683]
-  [0. 0. 1.]
+  [909.72   0.    631.43]
+  [  0.   912.34  358.80]
+  [  0.     0.      1.  ]
 * Distortion Coefficients
-  [0.11232303654662454, -0.47277989637474027, -6.726553087628563e-05, 0.0005557680260483787, 0.5754486589853096]
+  [0.1369, -0.4177, -0.0004, -0.0006, 0.3411]
 
+Extrinsic calibration method:
+  [0]  ARIC solver (iterative, default)
+  [1]  OpenCV Tsai
+Choice [0/1]: 0
+
+  EE poses matched: 101
 +------------------------------+
 | EXTRINSIC CAMERA CALIBRATION |
 +------------------------------+
+Calibration converged!
 * tcp_T_cam
-  [ 0.99841971 -0.00733935  0.0557155  -0.00005566]
-  [0.00560671 0.99949772 0.03119081 0.00015634]
-  [-0.05591644 -0.03082914  0.99795938  0.13995561]
-  [0. 0. 0. 1.]
+  [ 0.99994 -0.01066 -0.00363 -0.03624]
+  [ 0.01091  0.99692  0.07769 -0.10530]
+  [ 0.00280 -0.07772  0.99697  0.04125]
+  [ 0.       0.       0.       1.     ]
+* Translation  [-0.036 -0.105  0.041]
+* Euler (xyz)  deg X:-4.46  Y:-0.16  Z:0.62
 
-* Translation
-  [-0.00005566  0.00015634  0.13995561]
+* base_T_target (board origin)
+  Translation  [-0.432 -0.118 -0.167]
+  Euler (xyz)  deg X:0.65  Y:-0.19  Z:90.96
 
-* Euler Angles (ZYX)
-  (rad) X: -0.03088235865331096	Y: 0.055945617151973215	Z: 0.005615524215201508
-  (deg) X: -1.7694288122440347	Y: 3.205447745062774	Z: 0.32174583728456024
+* Target position std: [0.087, 0.074, 0.183] mm
+* Target rotation std: 0.035 deg
+
+Results:
+  calibration_data/18/calibration_results.txt
+  calibration_data/18/calibration_results.json
 ```
+
+### Publishing the result
+
+Once you have `tcp_T_cam`, publish it as a static TF. Plug in the translation and Euler angles from the calibration output:
+
+```bash
+ros2 run aric_camera_calibration publish_tcp_T_cam_tf -- \
+  --x -0.036240 --y -0.105303 --z 0.041253 \
+  --roll -4.4578 --pitch -0.1602 --yaw 0.6250
+```
+
+This publishes `link_6 -> camera_color_optical_frame_calibrated` by default. You can change frames with `--parent-frame` and `--child-frame`.
+
+### Verifying the calibration
+
+Use `pixel_picker` to verify the calibration result in real time. It continuously detects the CharuCo board origin and shows two estimates:
+
+- **pose** -- from CharuCo geometry (`estimatePoseCharucoBoard`), no depth sensor needed. This is the same method used during calibration and only requires the color image.
+- **depth** -- hybrid: CharuCo X/Y + depth sensor Z from `aligned_depth_to_color`. This is for personal testing/comparison only and is not part of the calibration.
+
+Clicking anywhere on the image logs the 3D coordinates (camera and base frame) via ROS info.
+
+```bash
+ros2 run aric_camera_calibration pixel_picker
+```
+
+The calibration itself uses only the color stream and CharuCo board geometry to compute both intrinsics and extrinsics. The `pixel_picker` uses calibrated intrinsics (K, D) hardcoded from run 18 and reads the CharuCo board config from the constants at the top of the file (must match `calibration_config.json`).
+
+## Nodes
+
+| Node | Description |
+|------|-------------|
+| `charuco_check` | Opens a live camera window showing detected markers and the board origin axes. Good for checking your setup before collecting data. No robot needed. |
+| `collect_and_calibrate` | Moves the robot through calibration poses, captures images, records TCP poses, then runs intrinsic and extrinsic calibration. Also publishes the detected board as a TF so you can see it in RViz. |
+| `publish_tcp_T_cam_tf` | Takes translation (metres) and rotation (degrees, Euler XYZ) and publishes a static TF from `link_6` to `camera_color_optical_frame_calibrated`. Override frames with `--parent-frame` and `--child-frame`. |
+| `pixel_picker` | Click on the live image to get 3D coordinates (logged via ROS info). Continuously detects the CharuCo board origin and shows two estimates on-screen: **pose** (CharuCo geometry, no depth) and **depth** (CharuCo X/Y + depth sensor Z). Uses synced aligned depth + color, calibrated intrinsics, and the TF chain. |
+
+## References
+
+The extrinsic solver options and their theory are documented in the [OpenCV calib3d reference](https://docs.opencv.org/4.5.4/d9/d0c/group__calib3d.html).

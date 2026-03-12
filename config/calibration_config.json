@@ -1,0 +1,26 @@
+{
+  "robot": {
+    "name": "Doosan",
+    "ip": ""
+  },
+  "camera": {
+    "image_topic": "/camera/camera/color/image_raw/compressed",
+    "camera_info_topic": "/camera/camera/color/camera_info"
+  },
+  "calibration_target": {
+    "type": "charuco",
+    "size": [11, 8],
+    "checker_length": 0.029,
+    "marker_length": 0.021,
+    "aruco_dict": "DICT_6X6_250",
+    "legacy_pattern": true,
+    "blur": [7, 1]
+  },
+  "calibration_data": {
+    "project_name": "m1013_calibration",
+    "rotate_image_180": false,
+    "data_collection_setup": [0.4, 25, 20, 0.15, 0.20],
+    "output_file_name": "ee_pose",
+    "use_existing_data": false
+  }
+}

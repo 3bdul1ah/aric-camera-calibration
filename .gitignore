@@ -1,6 +1,6 @@
-calibration_data/
+calibration_data/*
+!calibration_data/6/
 *.pyc
+__pycache__/
 .vscode
-*.json
-*.urdf.xacro
 *.old
