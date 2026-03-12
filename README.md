@@ -180,11 +180,6 @@ READING CHARUCO BOARD:
 * Distortion Coefficients
   [0.1369, -0.4177, -0.0004, -0.0006, 0.3411]
 
-Extrinsic calibration method:
-  [0]  ARIC solver (iterative, default)
-  [1]  OpenCV Tsai
-Choice [0/1]: 0
-
   EE poses matched: 101
 +------------------------------+
 | EXTRINSIC CAMERA CALIBRATION |
@@ -224,12 +219,7 @@ This publishes `link_6 -> camera_color_optical_frame_calibrated` by default. You
 
 ### Verifying the calibration
 
-Use `pixel_picker` to verify the calibration result in real time. It continuously detects the CharuCo board origin and shows two estimates:
-
-- **pose** -- from CharuCo geometry (`estimatePoseCharucoBoard`), no depth sensor needed. This is the same method used during calibration and only requires the color image.
-- **depth** -- hybrid: CharuCo X/Y + depth sensor Z from `aligned_depth_to_color`. This is for personal testing/comparison only and is not part of the calibration.
-
-Clicking anywhere on the image logs the 3D coordinates (camera and base frame) via ROS info.
+Use `pixel_picker` to verify the calibration result in real time by clicking anywhere on the image logs the 3D coordinates (camera and base frame) via ROS info.
 
 ```bash
 ros2 run aric_camera_calibration pixel_picker
